@@ -7,7 +7,7 @@ const app = express();
 
 // ================== CORS & MIDDLEWARE ==================
 app.use(cors({
-  origin: "*", // Sabhi origins allow hain (Frontend connection ke liye best)
+  origin: "*",
   methods: ["GET", "POST", "DELETE", "PUT"],
   credentials: true
 }));
@@ -16,12 +16,11 @@ app.use(express.json());
 // ================== MONGODB CONNECTION ==================
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected Successfully"))
-  .catch((err) => console.log("❌ Mongo Error:", err));
+  .then(() => console.log(" MongoDB Connected Successfully"))
+  .catch((err) => console.log(" Mongo Error:", err));
 
 // ================== MODELS ==================
 
-// 1. User Model
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -29,7 +28,6 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", userSchema);
 
-// 2. Tracking Model
 const trackingSchema = new mongoose.Schema(
   {
     trackingNumber: String,
@@ -40,10 +38,7 @@ const trackingSchema = new mongoose.Schema(
     currentLocation: String,
     expectedDelivery: String, 
     bookedBy: String, 
-    lastStatusUpdate: {
-      type: Date,
-      default: Date.now,
-    },
+    lastStatusUpdate: { type: Date, default: Date.now },
     history: [
       {
         status: String,
@@ -101,24 +96,19 @@ const courierMaster = [
 ];
 
 const statusFlow = ["Booked", "In Transit", "Out for Delivery", "Delivered"];
-const STATUS_INTERVAL = 2 * 60 * 1000; // 2 Minutes for Demo
+const STATUS_INTERVAL = 2 * 60 * 1000; 
 
 // ================== AUTH ROUTES ==================
 
-// Register Hub
 app.post("/register", async (req, res) => {
   try {
     const { username, password, role } = req.body;
     const existingUser = await User.findOne({ 
-        username: { $regex: new RegExp("^" + username + "$", "i") } 
+      username: { $regex: new RegExp("^" + username + "$", "i") } 
     });
     if (existingUser) return res.status(400).json({ message: "Hub Name already exists" });
 
-    const newUser = new User({ 
-        username: username, 
-        password: String(password), 
-        role: role 
-    });
+    const newUser = new User({ username, password: String(password), role });
     await newUser.save();
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
@@ -126,19 +116,13 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Login Route
 app.post("/login", async (req, res) => {
   try {
     const { username, password } = req.body;
     const user = await User.findOne({ 
-        username: { $regex: new RegExp("^" + username + "$", "i") }
+      username: { $regex: new RegExp("^" + username + "$", "i") }
     });
-
-    if (!user) {
-      return res.status(401).json({ success: false, message: "Invalid User ID or Password" });
-    }
-
-    if (String(user.password) === String(password)) {
+    if (user && String(user.password) === String(password)) {
       res.json({ success: true, role: user.role, username: user.username });
     } else {
       res.status(401).json({ success: false, message: "Invalid User ID or Password" });
@@ -148,7 +132,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Get All Partners
 app.get("/all-partners", async (req, res) => {
   try {
     const partners = await User.find({ role: "Franchisee" }).sort({ username: 1 });
@@ -162,70 +145,16 @@ app.get("/all-partners", async (req, res) => {
   }
 });
 
-// Delete Hub
 app.delete("/delete-hub/:id", async (req, res) => {
-    try {
-        await User.findByIdAndDelete(req.params.id);
-        res.json({ message: "Hub deleted successfully" });
-    } catch (err) {
-        res.status(500).json({ error: "Delete failed" });
-    }
-});
-
-// ================== TRACKING ROUTES ==================
-
-app.get("/all-trackings", async (req, res) => {
   try {
-    const allData = await Tracking.find().sort({ createdAt: -1 });
-    res.json(allData);
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: "Hub deleted successfully" });
   } catch (err) {
-    res.status(500).json({ error: "Fetch failed" });
+    res.status(500).json({ error: "Delete failed" });
   }
 });
 
-app.post("/create-tracking", async (req, res) => {
-  try {
-    const { from, to, courier: courierName, bookedBy } = req.body; 
-    const courier = courierMaster.find(c => c.name === courierName) || courierMaster[0];
-    const trackingNumber = courier.prefix + Math.floor(100000 + Math.random() * 900000);
-
-    const data = new Tracking({
-      trackingNumber,
-      courier: courier.name,
-      status: "Booked",
-      from, to,
-      currentLocation: from,
-      expectedDelivery: courier.expected[0],
-      bookedBy: bookedBy || "System Admin", 
-      history: [{ status: "Booked", location: from, time: new Date() }],
-    });
-
-    await data.save();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: "Creation failed" });
-  }
-});
-
-app.post("/update-status", async (req, res) => {
-  try {
-    const { trackingNumber, status } = req.body;
-    const t = await Tracking.findOne({ trackingNumber });
-    if (t) {
-      t.status = status;
-      t.lastStatusUpdate = new Date();
-      t.history.push({ status, location: t.currentLocation, time: new Date() });
-      await t.save();
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: "Not found" });
-    }
-  } catch (err) {
-    res.status(500).json({ error: "Update failed" });
-  }
-});
-
-// ================== AUTO STATUS LOGIC (FIXED) ==================
+// ================== AUTO STATUS LOGIC ==================
 
 const updateStatusIfNeeded = async (tracking) => {
   if (tracking.status === "Delivered") return tracking;
@@ -250,25 +179,29 @@ const updateStatusIfNeeded = async (tracking) => {
     } else {
       tracking.currentLocation = `${tracking.from} Regional Hub`;
     }
-  } 
-  else if (nextStatus === "Out for Delivery") {
+  } else if (nextStatus === "Out for Delivery") {
     tracking.currentLocation = `${tracking.to} Hub`;
-  }
-  else {
+  } else {
     tracking.currentLocation = tracking.to; 
   }
 
   tracking.expectedDelivery = courier ? courier.expected[nextIndex] : "Soon";
-  tracking.history.push({
-    status: nextStatus,
-    location: tracking.currentLocation,
-    time: now,
-  });
+  tracking.history.push({ status: nextStatus, location: tracking.currentLocation, time: now });
 
   return await tracking.save();
 };
 
-// ================== TRACKING SEARCH ==================
+// ================== TRACKING ROUTES ==================
+
+app.get("/all-trackings", async (req, res) => {
+  try {
+    const allData = await Tracking.find().sort({ createdAt: -1 });
+    res.json(allData);
+  } catch (err) {
+    res.status(500).json({ error: "Fetch failed" });
+  }
+});
+
 app.post("/track", async (req, res) => {
   try {
     const { trackingNumber, trackingNumbers } = req.body;
@@ -297,5 +230,29 @@ app.post("/track", async (req, res) => {
   }
 });
 
+app.post("/create-tracking", async (req, res) => {
+  try {
+    const { from, to, courier: courierName, bookedBy } = req.body; 
+    const courier = courierMaster.find(c => c.name === courierName) || courierMaster[0];
+    const trackingNumber = courier.prefix + Math.floor(100000 + Math.random() * 900000);
+
+    const data = new Tracking({
+      trackingNumber,
+      courier: courier.name,
+      status: "Booked",
+      from, to,
+      currentLocation: from,
+      expectedDelivery: courier.expected[0],
+      bookedBy: bookedBy || "System Admin", 
+      history: [{ status: "Booked", location: from, time: new Date() }],
+    });
+
+    await data.save();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: "Creation failed" });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(` Server running on port ${PORT}`));
