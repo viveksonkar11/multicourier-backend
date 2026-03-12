@@ -7,7 +7,7 @@ const app = express();
 
 // ================== CORS & MIDDLEWARE ==================
 app.use(cors({
-  origin: "*",
+  origin: "https://multicourier-frontend.vercel.app",
   methods: ["GET", "POST", "DELETE", "PUT"],
   credentials: true
 }));
