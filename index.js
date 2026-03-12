@@ -4,14 +4,20 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 
 const app = express();
-app.use(cors());
+
+// ================== CORS & MIDDLEWARE ==================
+app.use(cors({
+  origin: "*", // Sabhi origins allow hain (Frontend connection ke liye best)
+  methods: ["GET", "POST", "DELETE", "PUT"],
+  credentials: true
+}));
 app.use(express.json());
 
 // ================== MONGODB CONNECTION ==================
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected Successfully"))
-  .catch((err) => console.log(" Mongo Error", err));
+  .then(() => console.log("✅ MongoDB Connected Successfully"))
+  .catch((err) => console.log("❌ Mongo Error:", err));
 
 // ================== MODELS ==================
 
@@ -50,7 +56,7 @@ const trackingSchema = new mongoose.Schema(
 );
 const Tracking = mongoose.model("Tracking", trackingSchema);
 
-// ================== COURIERS STRUCTURE (New Clean Format) ==================
+// ================== COURIERS STRUCTURE ==================
 const courierMaster = [
   {
     name: "BlueDart",
@@ -103,11 +109,9 @@ const STATUS_INTERVAL = 2 * 60 * 1000; // 2 Minutes for Demo
 app.post("/register", async (req, res) => {
   try {
     const { username, password, role } = req.body;
-    
     const existingUser = await User.findOne({ 
         username: { $regex: new RegExp("^" + username + "$", "i") } 
     });
-    
     if (existingUser) return res.status(400).json({ message: "Hub Name already exists" });
 
     const newUser = new User({ 
@@ -144,26 +148,21 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Get All Partners with Shipment Count
+// Get All Partners
 app.get("/all-partners", async (req, res) => {
   try {
     const partners = await User.find({ role: "Franchisee" }).sort({ username: 1 });
-    
     const partnersWithCount = await Promise.all(partners.map(async (p) => {
       const count = await Tracking.countDocuments({ bookedBy: p.username });
-      return {
-        ...p._doc,
-        shipmentCount: count
-      };
+      return { ...p._doc, shipmentCount: count };
     }));
-
     res.json(partnersWithCount);
   } catch (err) {
     res.status(500).json({ error: "Partners fetch failed" });
   }
 });
 
-// DELETE HUB ROUTE
+// Delete Hub
 app.delete("/delete-hub/:id", async (req, res) => {
     try {
         await User.findByIdAndDelete(req.params.id);
@@ -187,7 +186,6 @@ app.get("/all-trackings", async (req, res) => {
 app.post("/create-tracking", async (req, res) => {
   try {
     const { from, to, courier: courierName, bookedBy } = req.body; 
-    
     const courier = courierMaster.find(c => c.name === courierName) || courierMaster[0];
     const trackingNumber = courier.prefix + Math.floor(100000 + Math.random() * 900000);
 
@@ -195,18 +193,11 @@ app.post("/create-tracking", async (req, res) => {
       trackingNumber,
       courier: courier.name,
       status: "Booked",
-      from: from,
-      to: to,
+      from, to,
       currentLocation: from,
       expectedDelivery: courier.expected[0],
       bookedBy: bookedBy || "System Admin", 
-      history: [
-        {
-          status: "Booked",
-          location: from,
-          time: new Date(),
-        },
-      ],
+      history: [{ status: "Booked", location: from, time: new Date() }],
     });
 
     await data.save();
@@ -223,11 +214,7 @@ app.post("/update-status", async (req, res) => {
     if (t) {
       t.status = status;
       t.lastStatusUpdate = new Date();
-      t.history.push({
-        status: status,
-        location: t.currentLocation,
-        time: new Date()
-      });
+      t.history.push({ status, location: t.currentLocation, time: new Date() });
       await t.save();
       res.json({ success: true });
     } else {
@@ -238,23 +225,21 @@ app.post("/update-status", async (req, res) => {
   }
 });
 
-// ================== AUTO STATUS LOGIC ==================
+// ================== AUTO STATUS LOGIC (FIXED) ==================
 
 const updateStatusIfNeeded = async (tracking) => {
-  if (tracking.status === "Delivered") return;
+  if (tracking.status === "Delivered") return tracking;
 
   const now = new Date();
   const diff = now - new Date(tracking.lastStatusUpdate);
-  if (diff < STATUS_INTERVAL) return; 
+  if (diff < STATUS_INTERVAL) return tracking; 
 
   const currentIndex = statusFlow.indexOf(tracking.status);
   const nextIndex = currentIndex + 1;
-  if (nextIndex >= statusFlow.length) return;
+  if (nextIndex >= statusFlow.length) return tracking;
 
   const nextStatus = statusFlow[nextIndex];
-  const courier = courierMaster.find((c) =>
-    tracking.trackingNumber.startsWith(c.prefix)
-  );
+  const courier = courierMaster.find((c) => tracking.trackingNumber.startsWith(c.prefix));
 
   tracking.status = nextStatus;
   tracking.lastStatusUpdate = now;
@@ -267,23 +252,20 @@ const updateStatusIfNeeded = async (tracking) => {
     }
   } 
   else if (nextStatus === "Out for Delivery") {
-    // ✅ FIX: Destination City ke sath " Hub" add kar diya
     tracking.currentLocation = `${tracking.to} Hub`;
   }
   else {
-    // ✅ Delivered ke liye sirf destination city
     tracking.currentLocation = tracking.to; 
   }
 
   tracking.expectedDelivery = courier ? courier.expected[nextIndex] : "Soon";
-
   tracking.history.push({
     status: nextStatus,
     location: tracking.currentLocation,
     time: now,
   });
 
-  await tracking.save();
+  return await tracking.save();
 };
 
 // ================== TRACKING SEARCH ==================
@@ -292,22 +274,22 @@ app.post("/track", async (req, res) => {
     const { trackingNumber, trackingNumbers } = req.body;
 
     if (trackingNumber) {
-      const t = await Tracking.findOne({ trackingNumber });
+      let t = await Tracking.findOne({ trackingNumber });
       if (!t) return res.json({ found: [], invalid: [trackingNumber] });
-      await updateStatusIfNeeded(t);
+      t = await updateStatusIfNeeded(t);
       return res.json({ found: [t], invalid: [] });
     }
 
     if (Array.isArray(trackingNumbers)) {
-      const found = await Tracking.find({
-        trackingNumber: { $in: trackingNumbers },
-      });
-      for (const t of found) {
-        await updateStatusIfNeeded(t);
+      const found = await Tracking.find({ trackingNumber: { $in: trackingNumbers } });
+      const updatedFound = [];
+      for (let t of found) {
+        const updated = await updateStatusIfNeeded(t);
+        updatedFound.push(updated);
       }
-      const foundIds = found.map((x) => x.trackingNumber);
+      const foundIds = updatedFound.map((x) => x.trackingNumber);
       const invalid = trackingNumbers.filter((x) => !foundIds.includes(x));
-      return res.json({ found, invalid });
+      return res.json({ found: updatedFound, invalid });
     }
     res.status(400).json({ error: "Invalid request" });
   } catch (err) {
@@ -316,5 +298,4 @@ app.post("/track", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
