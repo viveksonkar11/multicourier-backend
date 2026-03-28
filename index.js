@@ -7,7 +7,7 @@ const app = express();
 
 // ================== CORS & MIDDLEWARE ==================
 app.use(cors({
-  origin: ["https://multicourier-frontend.vercel.app","http://localhost:3000"],
+  origin: ["https://multicourier-frontend.vercel.app", "http://localhost:3000"],
   methods: ["GET", "POST", "DELETE", "PUT"],
   credentials: true
 }));
@@ -199,6 +199,48 @@ app.get("/all-trackings", async (req, res) => {
     res.json(allData);
   } catch (err) {
     res.status(500).json({ error: "Fetch failed" });
+  }
+});
+
+// FIXED ROUTE: Manual Admin Update
+app.post("/update-status", async (req, res) => {
+  try {
+    const { trackingNumber, status } = req.body;
+    
+    const tracking = await Tracking.findOne({ trackingNumber });
+    if (!tracking) return res.status(404).json({ error: "Tracking ID not found" });
+
+    // Status aur time update
+    tracking.status = status;
+    tracking.lastStatusUpdate = new Date();
+
+    // Location logic based on manual status
+    if (status === "In Transit") {
+      tracking.currentLocation = `${tracking.from} Regional Hub`;
+    } else if (status === "Out for Delivery") {
+      tracking.currentLocation = `${tracking.to} Hub`;
+    } else if (status === "Delivered") {
+      tracking.currentLocation = tracking.to;
+    }
+
+    // Expected delivery update logic for manual change
+    const courier = courierMaster.find((c) => tracking.trackingNumber.startsWith(c.prefix));
+    const statusIndex = statusFlow.indexOf(status);
+    if (courier && statusIndex !== -1) {
+        tracking.expectedDelivery = courier.expected[statusIndex];
+    }
+
+    // History update
+    tracking.history.push({
+      status: status,
+      location: tracking.currentLocation,
+      time: new Date()
+    });
+
+    await tracking.save();
+    res.json({ success: true, message: "Status Updated Successfully!" });
+  } catch (err) {
+    res.status(500).json({ error: "Manual Update failed" });
   }
 });
 

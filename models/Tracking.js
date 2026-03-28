@@ -22,13 +22,13 @@ const trackingSchema = new mongoose.Schema(
 
     currentLocation: String,
 
-    // ✅ IMPORTANT: STRING hi rahega (2–5 Days, Today, null)
+    
     expectedDelivery: {
       type: String,
       default: null,
     },
 
-    // ✅ 15 min rule ke liye
+    
     lastStatusUpdate: {
       type: Date,
       default: Date.now,
